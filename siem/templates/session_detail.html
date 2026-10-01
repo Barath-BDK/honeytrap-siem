@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% set active = "sessions" %}
+{% block title %}Session{% endblock %}
+{% block content %}
+<a class="back" href="/sessions"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 2.5 4 6l3.5 3.5"/></svg>Sessions</a>
+<div class="h"><h1 class="mono-title" id="s-title">Session</h1><div class="sub" id="s-sub">Loading</div><div class="spacer"></div>
+  <button class="btn primary" id="report-generate">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>
+    Generate report</button>
+</div>
+
+<div class="sec grid g-2-1">
+  <div class="glass">
+    <div class="panel-h"><h2>Timeline</h2><span class="meta" id="event-count"></span><div class="spacer"></div><span class="meta">Oldest first</span></div>
+    <div class="tbl" style="margin-top:10px;max-height:calc(100vh - 250px)">
+      <table>
+        <thead><tr><th style="width:11px"></th><th>Time</th><th>Severity</th><th>Event type</th><th>MITRE</th><th>Details</th></tr></thead>
+        <tbody id="event-rows"></tbody>
+      </table>
+      <div class="empty" id="empty-msg" hidden>This session was not found or has no events.</div>
+    </div>
+  </div>
+
+  <div>
+    <div class="glass" style="margin-bottom:14px">
+      <div class="panel-h"><h2>Case</h2><div class="spacer"></div><span id="s-status"></span></div>
+      <div class="panel-b form-stack">
+        <div><label class="field-l" for="case-status">Status</label>
+          <select id="case-status"><option value="new">New</option><option value="investigating">Investigating</option><option value="resolved">Resolved</option></select></div>
+        <div><label class="field-l" for="case-notes">Analyst notes</label>
+          <textarea id="case-notes" placeholder="Findings, IOCs, follow-ups"></textarea></div>
+        <div class="form-actions"><button class="btn primary" id="case-save">Save case</button><span class="save-msg" id="save-msg"></span></div>
+      </div>
+    </div>
+    <div class="glass">
+      <div class="panel-h"><h2>At a glance</h2></div>
+      <div class="panel-b"><div class="kv" id="s-kv"></div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  "use strict";
+  const { $, $$, esc, fmtTime, api, toast, sevTag, statusTag, railMark, mitreChip, plural, skelRows, enter, STATUSES } = HT;
+  const SESSION_ID = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
+  const isWeb = SESSION_ID.startsWith("web:");
+  $("#s-title").textContent = SESSION_ID || "unknown";
+  document.title = `Session ${SESSION_ID} · Honeytrap SIEM`;
+  let formInit = false;
+
+  async function load() {
+    let data;
+    try { data = await api("/api/sessions/" + encodeURIComponent(SESSION_ID)); }
+    catch (e) { $("#event-rows").innerHTML = ""; $("#empty-msg").hidden = false; $("#s-sub").textContent = "Not found"; return; }
+    const ev = data.events || [];
+    const first = ev[0], last = ev[ev.length - 1];
+    const sevOrder = ["critical", "high", "medium", "low", "info"];
+    const maxSev = sevOrder.find(s => ev.some(e => e.severity_label === s)) || "info";
+    $("#s-sub").innerHTML = `<b>${esc(data.ip || "-")}</b> · ${plural(ev.length, "event")} · ${esc(isWeb ? "web" : "ssh")}`;
+    $("#s-status").innerHTML = statusTag(data.alert_status);
+    const techs = [...new Set(ev.map(e => e.mitre_technique).filter(Boolean))];
+    $("#s-kv").innerHTML = [
+      ["Source IP", data.ip || "-"], ["Surface", isWeb ? "Web" : "SSH"], ["First seen", first ? fmtTime(first.timestamp) : "-"],
+      ["Last seen", last ? fmtTime(last.timestamp) : "-"], ["Max severity", null], ["Techniques", null],
+    ].map(([k, v]) => `<span class="k">${k}</span>` + (k === "Max severity" ? `<span class="v sans">${sevTag(maxSev)}</span>`
+      : k === "Techniques" ? `<span class="v sans"><span class="chips">${techs.map(t => mitreChip(t)).join("") || '<span class="dash">-</span>'}</span></span>`
+      : `<span class="v">${esc(v)}</span>`)).join("");
+
+    if (!formInit) {
+      $("#case-status").value = STATUSES.includes(data.alert_status) ? data.alert_status : "new";
+      $("#case-notes").value = data.analyst_notes || ""; formInit = true;
+    }
+    $("#event-count").textContent = plural(ev.length, "event");
+    $("#empty-msg").hidden = ev.length > 0;
+    const tbody = $("#event-rows");
+    tbody.innerHTML = ev.map(e => {
+      const s = e.severity_label || "info";
+      return `<tr><td class="rail-cell">${railMark(s)}</td><td class="mono faint">${fmtTime(e.timestamp)}</td><td>${sevTag(s)}</td>
+        <td class="dim">${esc(e.type)}</td><td>${mitreChip(e.mitre_technique)}</td><td class="details" title="${esc(e.details)}">${esc(e.details)}</td></tr>`;
+    }).join("");
+    enter("timeline", $$("tr", tbody).slice(0, 20));
+  }
+
+  async function saveCase() {
+    const btn = $("#case-save"), msg = $("#save-msg");
+    btn.disabled = true; msg.className = "save-msg"; msg.textContent = "Saving";
+    try {
+      const data = await api("/api/sessions/" + encodeURIComponent(SESSION_ID) + "/status",
+        { method: "POST", body: JSON.stringify({ status: $("#case-status").value, notes: $("#case-notes").value }) });
+      $("#s-status").innerHTML = statusTag(data.alert_status);
+      msg.className = "save-msg ok"; msg.textContent = "Saved " + fmtTime(new Date()).slice(7);
+      toast("Case saved", { kind: "ok" });
+    } catch (e) { msg.className = "save-msg err"; msg.textContent = "Save failed: " + e.message; }
+    finally { btn.disabled = false; }
+  }
+
+  async function generateReport() {
+    const btn = $("#report-generate"); btn.disabled = true;
+    const busy = toast("Generating report", { spinner: true, duration: 15000 });
+    try {
+      const data = await api("/api/reports/generate", { method: "POST", body: JSON.stringify({ session_id: SESSION_ID }) });
+      busy.dismiss();
+      toast(`Report #${data.id} is ready.`, { kind: "ok", linkText: "Open report", linkHref: "/reports/" + data.id, duration: 8000 });
+    } catch (e) { busy.dismiss(); toast("Report generation failed: " + e.message, { kind: "err", duration: 6000 }); }
+    finally { btn.disabled = false; }
+  }
+
+  $("#case-save").addEventListener("click", saveCase);
+  $("#report-generate").addEventListener("click", generateReport);
+  window.HT_CMDS = [{ g: "Action", l: "Generate report for this session", run: generateReport }, { g: "Action", l: "Save case", run: saveCase }];
+  $("#event-rows").innerHTML = skelRows(8, 6);
+  load();
+  setInterval(() => { if (!document.hidden) load(); }, 15000);
+})();
+</script>
+{% endblock %}

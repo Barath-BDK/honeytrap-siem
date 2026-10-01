@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Sign in · Honeytrap SIEM</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 6v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6l-8-4Z' fill='%234cc38a'/%3E%3C/svg%3E">
+<script>try { if (localStorage.getItem("ht-theme") === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='slate.css') }}">
+</head>
+<body>
+<main class="login-page">
+  <div class="glass login-card" id="card">
+    <div class="app-title">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6l-8-4Z"/></svg></span>
+      Honeytrap SIEM
+      <span class="live" style="margin-left:auto"><span class="live-dot"></span>Online</span>
+    </div>
+    <h1>Analyst sign in</h1>
+    <p class="sub">Authenticate to open the monitoring console.</p>
+    <form method="POST" class="form-stack" style="gap:14px">
+      <div><label class="field-l" for="u">Username</label><input id="u" type="text" name="username" autocomplete="username" required autofocus></div>
+      <div><label class="field-l" for="p">Password</label><input id="p" type="password" name="password" autocomplete="current-password" required></div>
+      <button class="btn primary" type="submit">Sign in</button>
+    </form>
+    {% if error %}<div class="login-err" id="err">{{ error }}</div>{% endif %}
+    <div class="login-foot">Restricted system. Activity is logged and monitored.</div>
+  </div>
+</main>
+<script src="{{ url_for('static', filename='gsap.min.js') }}"></script>
+<script>
+  (() => {
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (typeof gsap === "undefined" || reduce) return;
+    const card = document.getElementById("card");
+    gsap.from(card, { autoAlpha: 0, y: 14, scale: .985, duration: .55, ease: "power3.out", clearProps: "all" });
+    gsap.from(card.querySelectorAll(".app-title, h1, .sub, form > div, form > button"), { autoAlpha: 0, y: 8, duration: .4, ease: "power2.out", stagger: .05, delay: .12, clearProps: "all" });
+    const err = document.getElementById("err");
+    if (err) gsap.fromTo(card, { x: -8 }, { x: 0, duration: .5, ease: "elastic.out(1, 0.35)", delay: .3, clearProps: "transform" });
+  })();
+</script>
+</body>
+</html>

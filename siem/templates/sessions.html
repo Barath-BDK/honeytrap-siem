@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% set active = "sessions" %}
+{% block title %}Sessions{% endblock %}
+{% block content %}
+<div class="h"><h1>Sessions</h1><div class="sub" id="sum-line">Loading sessions</div><div class="spacer"></div>
+  <div class="filters">
+    <label class="fl">Sort <select id="f-sort"><option value="desc">Newest first</option><option value="asc">Oldest first</option></select></label>
+    <select id="f-range" aria-label="Time range">
+      <option value="">All time</option><option value="1h">Last hour</option><option value="24h">Last 24 hours</option>
+      <option value="7d">Last 7 days</option><option value="custom">Custom range</option>
+    </select>
+    <span class="range-custom" id="range-custom">
+      <input type="datetime-local" id="f-from" step="1" aria-label="From"><span class="to">to</span><input type="datetime-local" id="f-to" step="1" aria-label="To">
+    </span>
+    <button class="btn" id="f-clear">Clear</button>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="sec-h"><h2>SSH sessions</h2><span class="meta" id="session-count"></span><div class="spacer"></div><span class="meta">Click a session to open its case</span></div>
+  <div class="glass"><div class="tbl" style="max-height:calc(60vh)">
+    <table>
+      <thead><tr><th style="width:11px"></th><th>Session</th><th>Source IP</th><th>First seen</th><th>Last seen</th><th>Events</th><th>Max severity</th><th>Trap</th><th>Case</th><th></th></tr></thead>
+      <tbody id="session-rows"></tbody>
+    </table>
+    <div class="empty" id="sessions-empty" hidden>No SSH sessions in this range.<br>Sessions appear here a few seconds after an attacker connects to the SSH honeypot.</div>
+  </div></div>
+</div>
+
+<div class="sec">
+  <div class="sec-h"><h2>Web activity</h2><span class="meta" id="web-count"></span><div class="spacer"></div><span class="meta">Grouped by source IP</span></div>
+  <div class="glass"><div class="tbl" style="max-height:44vh">
+    <table>
+      <thead><tr><th style="width:11px"></th><th>Source IP</th><th>Requests</th><th>First seen</th><th>Last seen</th><th>Max severity</th><th>Trap</th><th>Case</th><th></th></tr></thead>
+      <tbody id="web-rows"></tbody>
+    </table>
+    <div class="empty" id="web-empty" hidden>No web probe activity in this range.</div>
+  </div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  "use strict";
+  const { $, $$, esc, fmtTime, api, sevTag, statusTag, railMark, plural, skelRows, rangeParams, enter } = HT;
+  const trap = hit => hit ? `<span class="chip warn">Triggered</span>` : `<span class="dash">-</span>`;
+  let ssh = [], web = [];
+
+  function params() {
+    const p = new URLSearchParams(); p.set("sort", $("#f-sort").value);
+    return rangeParams(p, $("#f-range"), $("#f-from"), $("#f-to"));
+  }
+  function summary() {
+    const open = [...ssh, ...web].filter(s => s.alert_status !== "resolved").length;
+    $("#sum-line").innerHTML = `<b>${ssh.length}</b> SSH ${ssh.length === 1 ? "session" : "sessions"} · <b>${web.length}</b> web ${web.length === 1 ? "source" : "sources"} · <b>${open}</b> open ${open === 1 ? "case" : "cases"}`;
+  }
+
+  async function refreshSessions() {
+    try { ssh = await api("/api/sessions?" + params()); } catch (e) { return; }
+    const tbody = $("#session-rows");
+    $("#session-count").textContent = plural(ssh.length, "session");
+    $("#sessions-empty").hidden = ssh.length > 0;
+    tbody.innerHTML = ssh.map(s => {
+      const sev = s.max_severity_label || "info";
+      return `<tr class="clickable" data-sid="${esc(s.session_id)}">
+        <td class="rail-cell">${railMark(sev)}</td>
+        <td class="mono">${esc(s.session_id)}</td>
+        <td class="mono">${s.ip ? esc(s.ip) : '<span class="dash">-</span>'}</td>
+        <td class="mono faint">${fmtTime(s.first_seen)}</td>
+        <td class="mono faint">${fmtTime(s.last_seen)}</td>
+        <td>${s.event_count}</td>
+        <td>${sevTag(sev)}</td>
+        <td>${trap(s.trap_hit)}</td>
+        <td>${statusTag(s.alert_status)}</td>
+        <td class="chev">›</td></tr>`;
+    }).join("");
+    enter("ssh", $$("tr", tbody).slice(0, 16));
+    summary();
+  }
+
+  async function refreshWeb() {
+    try { web = await api("/api/sessions/web-activity?" + params()); } catch (e) { return; }
+    const tbody = $("#web-rows");
+    $("#web-count").textContent = plural(web.length, "source");
+    $("#web-empty").hidden = web.length > 0;
+    tbody.innerHTML = web.map(r => {
+      const sev = r.max_severity_label || "info";
+      return `<tr class="clickable" data-sid="${esc(r.session_id)}">
+        <td class="rail-cell">${railMark(sev)}</td>
+        <td class="mono">${r.ip ? esc(r.ip) : '<span class="dash">-</span>'}</td>
+        <td>${r.event_count}</td>
+        <td class="mono faint">${fmtTime(r.first_seen)}</td>
+        <td class="mono faint">${fmtTime(r.last_seen)}</td>
+        <td>${sevTag(sev)}</td>
+        <td>${trap(r.trap_hit)}</td>
+        <td>${statusTag(r.alert_status)}</td>
+        <td class="chev">›</td></tr>`;
+    }).join("");
+    enter("web", $$("tr", tbody).slice(0, 12));
+    summary();
+  }
+
+  // one delegated listener per table; ids travel in data-* attributes only
+  ["#session-rows", "#web-rows"].forEach(sel => $(sel).addEventListener("click", e => {
+    const tr = e.target.closest("tr[data-sid]"); if (tr) location.href = "/sessions/" + encodeURIComponent(tr.dataset.sid);
+  }));
+
+  const apply = () => { refreshSessions(); refreshWeb(); };
+  $("#f-sort").addEventListener("change", apply);
+  $("#f-range").addEventListener("change", () => {
+    const custom = $("#f-range").value === "custom";
+    $("#range-custom").classList.toggle("show", custom); if (!custom) apply();
+  });
+  ["f-from", "f-to"].forEach(id => $("#" + id).addEventListener("change", apply));
+  $("#f-clear").addEventListener("click", () => {
+    $("#f-sort").value = "desc"; $("#f-range").value = ""; $("#f-from").value = ""; $("#f-to").value = "";
+    $("#range-custom").classList.remove("show"); apply();
+  });
+
+  $("#session-rows").innerHTML = skelRows(6, 10); $("#web-rows").innerHTML = skelRows(3, 9);
+  apply();
+  setInterval(() => { if (!document.hidden) apply(); }, 15000);
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% set active = "rules" %}
+{% block title %}Detection rules{% endblock %}
+{% block content %}
+<div class="h"><h1>Detection rules</h1><div class="sub" id="sum-line">Loading rules</div></div>
+
+<div class="sec glass" id="form-panel">
+  <div class="panel-h"><h2 id="form-title">Create rule</h2><div class="spacer"></div><span class="meta">Threshold rule, evaluated every pipeline cycle</span></div>
+  <div class="panel-b">
+    <div class="sentence">
+      <span>Raise a</span>
+      <select id="r-severity" aria-label="Severity"><option value="critical">critical</option><option value="high">high</option><option value="medium" selected>medium</option><option value="low">low</option><option value="info">info</option></select>
+      <span>alert when</span>
+      <select id="r-field" aria-label="Field"><option value="">any event</option><option value="category">category</option><option value="type">type</option><option value="severity">severity</option><option value="source">source</option><option value="mitre">mitre</option><option value="ip">ip</option></select>
+      <span class="eq" id="r-eq" hidden>equals</span>
+      <input type="text" class="val" id="r-value" placeholder="e.g. sqli" hidden aria-label="Value" list="r-suggest">
+      <datalist id="r-suggest"></datalist>
+      <span>from the same</span>
+      <select id="r-group" aria-label="Group by"><option value="ip">IP</option><option value="session_id">session</option></select>
+      <span>reaches</span>
+      <input type="number" class="num" id="r-threshold" value="10" min="1" max="100000" aria-label="Threshold">
+      <span>events within</span>
+      <input type="number" class="num" id="r-window" value="60" min="1" max="43200" aria-label="Window in minutes">
+      <span>minutes.</span>
+    </div>
+    <div class="rule-actions">
+      <input type="text" id="r-name" placeholder="Rule name, e.g. SQLi burst" aria-label="Rule name">
+      <button class="btn primary" id="r-save">Create rule</button>
+      <button class="btn" id="r-cancel" hidden>Cancel edit</button>
+      <span class="save-msg" id="form-msg"></span>
+    </div>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="sec-h"><h2>Rules</h2><span class="meta" id="rule-count"></span><div class="spacer"></div><span class="meta">Toggle, edit or delete</span></div>
+  <div class="glass"><div class="tbl">
+    <table>
+      <thead><tr><th>Enabled</th><th>Name</th><th>Condition</th><th>Severity</th><th>Triggers</th><th>Last fired</th><th style="text-align:right">Actions</th></tr></thead>
+      <tbody id="rule-rows"></tbody>
+    </table>
+    <div class="empty" id="rules-empty" hidden>No rules yet.<br>Build one with the sentence above, for example a medium alert when category equals sqli reaches 5 events in 10 minutes.</div>
+  </div></div>
+  <p class="note-p meta" style="margin:12px 2px 0">Rules are stored as structured data and interpreted by the engine. Field and group names come from a fixed allow-list, so nothing typed here ever reaches SQL as code.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  "use strict";
+  const { $, $$, esc, fmtTime, api, toast, confirm, sevTag, plural, skelRows, enter } = HT;
+  let RULES = [], editId = null;
+
+  const SUGGEST = {
+    category: ["sqli", "xss", "cmdi", "traversal", "lfi", "recon", "credential_theft", "privilege_escalation", "memory_exploit_attempt", "supply_chain_attempt", "malware_download", "reverse_shell_attempt", "persistence_attempt"],
+    severity: ["critical", "high", "medium", "low", "info"], source: ["ssh", "web"],
+    type: ["ssh_auth_attempt", "ssh_command", "ssh_brute_force_confirmed", "web_404_probe", "web_admin_probe", "web_env_probe", "web_registry_probe"],
+    mitre: ["T1110", "T1190", "T1059", "T1552.001", "T1195", "T1203", "T1548"], ip: [],
+  };
+  function syncValueBox() {
+    const f = $("#r-field").value, has = f !== "";
+    $("#r-value").hidden = !has; $("#r-eq").hidden = !has;
+    $("#r-suggest").innerHTML = (SUGGEST[f] || []).map(v => `<option value="${esc(v)}">`).join("");
+  }
+  $("#r-field").addEventListener("change", syncValueBox);
+
+  const readForm = () => ({
+    name: $("#r-name").value.trim(), field: $("#r-field").value, value: $("#r-value").value.trim(), group_by: $("#r-group").value,
+    threshold: parseInt($("#r-threshold").value, 10), window_minutes: parseInt($("#r-window").value, 10), severity: $("#r-severity").value,
+  });
+  function resetForm() {
+    editId = null; $("#form-title").textContent = "Create rule"; $("#r-save").textContent = "Create rule"; $("#r-cancel").hidden = true;
+    $("#r-name").value = ""; $("#r-field").value = ""; $("#r-value").value = ""; $("#r-group").value = "ip";
+    $("#r-threshold").value = "10"; $("#r-window").value = "60"; $("#r-severity").value = "medium"; syncValueBox();
+  }
+  function startEdit(r) {
+    editId = r.id; $("#form-title").textContent = `Edit rule #${r.id}`; $("#r-save").textContent = "Save changes"; $("#r-cancel").hidden = false;
+    $("#r-name").value = r.name; $("#r-field").value = r.field || ""; $("#r-value").value = r.value || ""; $("#r-group").value = r.group_by;
+    $("#r-threshold").value = r.threshold; $("#r-window").value = r.window_minutes; $("#r-severity").value = r.severity; syncValueBox();
+    window.scrollTo({ top: 0, behavior: HT.reduceMotion ? "auto" : "smooth" });
+    const fp = $("#form-panel"); if (HT.hasGsap && !HT.reduceMotion) gsap.fromTo(fp, { boxShadow: "0 0 0 1px hsl(210 100% 66% / .6)" }, { boxShadow: "0 0 0 0px hsl(210 100% 66% / 0)", duration: 1.2, ease: "power2.out", clearProps: "boxShadow" });
+    $("#r-name").focus({ preventScroll: true });
+  }
+
+  async function saveRule() {
+    const btn = $("#r-save"), msg = $("#form-msg"); btn.disabled = true; msg.className = "save-msg"; msg.textContent = "Saving";
+    try {
+      const wasEdit = !!editId;
+      await api(editId ? "/api/rules/" + editId : "/api/rules", { method: editId ? "PUT" : "POST", body: JSON.stringify(readForm()) });
+      msg.textContent = ""; toast(wasEdit ? "Rule updated" : "Rule created", { kind: "ok" });
+      resetForm(); load();
+    } catch (e) { msg.className = "save-msg err"; msg.textContent = e.message; }
+    finally { btn.disabled = false; }
+  }
+  async function toggleRule(id) {
+    try { const r = await api(`/api/rules/${id}/toggle`, { method: "POST" }); toast(`${r.name} ${r.enabled ? "enabled" : "disabled"}`); load(); }
+    catch (e) { toast("Could not toggle: " + e.message, { kind: "err" }); load(); }
+  }
+  async function deleteRule(id) {
+    const r = RULES.find(x => x.id === id);
+    const ok = await confirm({ title: "Delete this rule?", message: `"${r ? r.name : "Rule #" + id}" will be removed and the alerts it produced will be cleared. This cannot be undone.`, okText: "Delete rule", danger: true });
+    if (!ok) return;
+    try { await api("/api/rules/" + id, { method: "DELETE" }); if (editId === id) resetForm(); toast("Rule deleted"); load(); }
+    catch (e) { toast("Delete failed: " + e.message, { kind: "err" }); }
+  }
+
+  const condText = r => {
+    const c = r.field ? `<span class="k">${esc(r.field)}</span> = <span class="k">${esc(r.value)}</span>` : "any event";
+    return `<span class="cond">${c}, at least <b>${esc(r.threshold)}</b> per <span class="k">${esc(r.group_by === "session_id" ? "session" : "ip")}</span> in ${esc(r.window_minutes)} min</span>`;
+  };
+  async function load() {
+    try { RULES = await api("/api/rules"); } catch (e) { return; }
+    const enabled = RULES.filter(r => r.enabled).length, trig = RULES.reduce((a, r) => a + (r.trigger_count || 0), 0);
+    $("#sum-line").innerHTML = `<b>${RULES.length}</b> ${RULES.length === 1 ? "rule" : "rules"} · <b>${enabled}</b> enabled · <b>${trig}</b> ${trig === 1 ? "trigger" : "triggers"}`;
+    $("#rule-count").textContent = plural(RULES.length, "rule");
+    $("#rules-empty").hidden = RULES.length > 0;
+    const tbody = $("#rule-rows");
+    tbody.innerHTML = RULES.map(r => `<tr>
+      <td><label class="switch" title="${r.enabled ? "Disable" : "Enable"} rule"><input type="checkbox" data-toggle="${esc(r.id)}" ${r.enabled ? "checked" : ""} aria-label="Enabled"><span class="track"></span><span class="knob"></span></label></td>
+      <td style="font-weight:550">${esc(r.name)}</td><td>${condText(r)}</td><td>${sevTag(r.severity)}</td>
+      <td><span class="count-pill ${r.trigger_count ? "" : "zero"}">${r.trigger_count || 0}</span></td>
+      <td class="mono faint">${r.last_triggered ? fmtTime(r.last_triggered, false) : "never"}</td>
+      <td><div class="row-actions"><button class="btn sm" data-edit="${esc(r.id)}">Edit</button><button class="btn sm danger" data-del="${esc(r.id)}">Delete</button></div></td></tr>`).join("");
+    enter("rules", $$("tr", tbody));
+  }
+  const tbody = $("#rule-rows");
+  tbody.addEventListener("change", e => { const t = e.target.closest("input[data-toggle]"); if (t) toggleRule(parseInt(t.dataset.toggle, 10)); });
+  tbody.addEventListener("click", e => {
+    const ed = e.target.closest("button[data-edit]"); if (ed) { const r = RULES.find(x => x.id === parseInt(ed.dataset.edit, 10)); if (r) startEdit(r); return; }
+    const del = e.target.closest("button[data-del]"); if (del) deleteRule(parseInt(del.dataset.del, 10));
+  });
+  $("#r-save").addEventListener("click", saveRule);
+  $("#r-cancel").addEventListener("click", resetForm);
+  $("#r-name").addEventListener("keydown", e => { if (e.key === "Enter") saveRule(); });
+  window.HT_CMDS = [{ g: "Action", l: "New rule", run: () => { resetForm(); $("#r-name").focus(); } }];
+  syncValueBox();
+  tbody.innerHTML = skelRows(3, 7);
+  load();
+  setInterval(() => { if (!document.hidden) load(); }, 15000);
+})();
+</script>
+{% endblock %}

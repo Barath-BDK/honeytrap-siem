@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% set active = "reports" %}
+{% block title %}Reports{% endblock %}
+{% block content %}
+<div class="h"><h1>Reports</h1><div class="sub" id="sum-line">Loading reports</div><div class="spacer"></div>
+  <div class="filters">
+    <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
+      <input type="text" id="f-q" placeholder="Session, IP or technique" aria-label="Search reports" style="width:220px"></label>
+    <label class="fl">Sort <select id="f-sort"><option value="desc">Newest first</option><option value="asc">Oldest first</option></select></label>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="glass"><div class="tbl" style="max-height:calc(100vh - 200px)">
+    <table>
+      <thead><tr><th style="width:11px"></th><th>Report</th><th>Session</th><th>Source IP</th><th>Generated</th><th>Severity</th><th>Events</th><th>MITRE</th><th></th></tr></thead>
+      <tbody id="report-rows"></tbody>
+    </table>
+    <div class="empty" id="reports-empty" hidden>No reports yet.<br>Open any session and press Generate report.</div>
+  </div></div>
+  <p class="note-p meta" style="margin:12px 2px 0">Reports are written by deterministic templates from the event data, with no AI involved, so the same session always produces the same narrative.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  "use strict";
+  const { $, $$, esc, fmtTime, api, sevTag, railMark, skelRows, enter } = HT;
+  let all = [];
+  function render() {
+    const q = $("#f-q").value.trim().toLowerCase();
+    const rows = q ? all.filter(r => [r.session_id, r.ip, ...(r.mitre_techniques || []).map(t => t.id)].some(v => String(v || "").toLowerCase().includes(q))) : all;
+    const crit = all.filter(r => r.max_severity_label === "critical" || r.max_severity_label === "high").length;
+    $("#sum-line").innerHTML = `<b>${all.length}</b> ${all.length === 1 ? "report" : "reports"} · <b>${crit}</b> critical or high` + (all.length ? ` · latest ${esc(fmtTime(all.reduce((a, r) => r.generated_at > a ? r.generated_at : a, ""), false))}` : "");
+    $("#reports-empty").hidden = rows.length > 0;
+    const tbody = $("#report-rows");
+    tbody.innerHTML = rows.map(r => {
+      const s = r.max_severity_label || "info";
+      const techs = (r.mitre_techniques || []).slice(0, 3).map(t => `<span class="chip mono">${esc(t.id)}</span>`).join(" ") + ((r.mitre_techniques || []).length > 3 ? ` <span class="chip dim">+${r.mitre_techniques.length - 3}</span>` : "");
+      return `<tr class="clickable" data-rid="${esc(r.id)}">
+        <td class="rail-cell">${railMark(s)}</td><td style="font-weight:600">#${esc(r.id)}</td>
+        <td class="mono"><a href="/sessions/${encodeURIComponent(r.session_id)}" style="color:var(--fg-2)" data-stop>${esc(r.session_id)}</a></td>
+        <td class="mono">${r.ip ? esc(r.ip) : '<span class="dash">-</span>'}</td><td class="mono faint">${fmtTime(r.generated_at)}</td>
+        <td>${sevTag(s)}</td><td>${r.event_count}</td><td>${techs || '<span class="dash">-</span>'}</td><td class="chev">›</td></tr>`;
+    }).join("");
+    enter("reports", $$("tr", tbody).slice(0, 16));
+  }
+  async function load() { try { all = await api("/api/reports?sort=" + $("#f-sort").value); } catch (e) { return; } render(); }
+  $("#report-rows").addEventListener("click", e => {
+    if (e.target.closest("a[data-stop]")) return;
+    const tr = e.target.closest("tr[data-rid]"); if (tr) location.href = "/reports/" + encodeURIComponent(tr.dataset.rid);
+  });
+  $("#f-sort").addEventListener("change", load);
+  let deb; $("#f-q").addEventListener("input", () => { clearTimeout(deb); deb = setTimeout(render, 150); });
+  $("#report-rows").innerHTML = skelRows(5, 9);
+  load();
+  setInterval(() => { if (!document.hidden) load(); }, 30000);
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% set active = "settings" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="h"><h1>Settings</h1><div class="sub">Saved in this browser only</div></div>
+
+<div class="sec">
+  <div class="sec-h"><h2>Appearance</h2><div class="spacer"></div><button class="btn sm" id="set-reset">Reset to defaults</button></div>
+  <div class="glass set-panel">
+    <div class="set-row">
+      <div class="set-k"><b>Theme</b><span>Dark slate, or warm paper for daylight and printing.</span></div>
+      <select id="set-theme" aria-label="Theme"><option value="">Dark</option><option value="light">Light</option></select>
+      <span></span>
+    </div>
+    <div class="set-row">
+      <div class="set-k"><b>Theme switch animation</b><span>How the page changes between dark and light.</span></div>
+      <select id="set-vt" aria-label="Theme switch animation"></select>
+      <button class="btn sm" id="set-vt-try">Preview</button>
+    </div>
+    <div class="set-row">
+      <div class="set-k"><b>Page title animation</b><span>Plays when a page opens.</span></div>
+      <select id="set-title" aria-label="Page title animation"><option value="rise">Letters rise</option><option value="blur">Focus pull</option><option value="wipe">Wipe in</option><option value="none">None</option></select>
+      <button class="btn sm" id="set-title-try">Preview</button>
+    </div>
+    <div class="set-row">
+      <div class="set-k"><b>Sidebar</b><span>Collapse to icons for more room. Ctrl K still jumps anywhere.</span></div>
+      <select id="set-rail" aria-label="Sidebar"><option value="">Expanded</option><option value="collapsed">Collapsed</option></select>
+      <span></span>
+    </div>
+  </div>
+  <p class="note-p meta" style="margin:12px 2px 0">Animations switch off automatically when your system asks for reduced motion.</p>
+</div>
+
+<div class="sec">
+  <div class="sec-h"><h2>Sensor</h2></div>
+  <div class="glass panel-b"><div class="kv">
+    <span class="k">Honeypot host</span><span class="v">{{ sensor.host }}</span>
+    <span class="k">SSH listener</span><span class="v">{{ sensor.ssh_port }}</span>
+    <span class="k">Web listener</span><span class="v">{{ sensor.web_port }}</span>
+    <span class="k">Database</span><span class="v">{{ sensor.db }}</span>
+    <span class="k">Config</span><span class="v sans">Edit <span class="mono">.env</span> in the project folder and restart <span class="mono">app.py</span> and <span class="mono">pipeline.py</span>.</span>
+  </div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  "use strict";
+  const { $, esc, store, toast, TRANSITIONS, animateTitle, switchTheme } = HT;
+  const root = document.documentElement;
+  $("#set-vt").innerHTML = Object.entries(TRANSITIONS).map(([k, t]) => `<option value="${esc(k)}">${esc(t.label)}</option>`).join("");
+  function fill() {
+    $("#set-theme").value = root.dataset.theme === "light" ? "light" : "";
+    $("#set-vt").value = store.get("ht-vt", "circle");
+    $("#set-title").value = store.get("ht-title", "rise");
+    $("#set-rail").value = root.dataset.rail === "collapsed" ? "collapsed" : "";
+  }
+  fill();
+  $("#set-theme").addEventListener("change", e => { const r = e.target.getBoundingClientRect(); switchTheme(e.target.value, r.left + r.width / 2, r.top + r.height / 2); });
+  $("#set-vt").addEventListener("change", e => store.set("ht-vt", e.target.value === "circle" ? null : e.target.value));
+  $("#set-title").addEventListener("change", e => { store.set("ht-title", e.target.value === "rise" ? null : e.target.value); animateTitle($(".h h1"), e.target.value); });
+  $("#set-rail").addEventListener("change", e => { const want = e.target.value === "collapsed"; if (want !== (root.dataset.rail === "collapsed")) $("#rail-toggle").click(); });
+  $("#set-title-try").addEventListener("click", () => animateTitle($(".h h1"), $("#set-title").value));
+  $("#set-vt-try").addEventListener("click", e => {
+    const r = e.currentTarget.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, kind = $("#set-vt").value;
+    const cur = root.dataset.theme === "light" ? "light" : "";
+    switchTheme(cur ? "" : "light", x, y, kind);
+    setTimeout(() => { switchTheme(cur, x, y, kind); setTimeout(fill, 50); }, 1300);
+  });
+  $("#set-reset").addEventListener("click", () => {
+    ["ht-vt", "ht-title"].forEach(k => store.set(k, null));
+    if (root.dataset.rail === "collapsed") $("#rail-toggle").click();
+    if (root.dataset.theme === "light") switchTheme("", innerWidth / 2, innerHeight / 2);
+    setTimeout(fill, 60); toast("Appearance reset");
+  });
+})();
+</script>
+{% endblock %}

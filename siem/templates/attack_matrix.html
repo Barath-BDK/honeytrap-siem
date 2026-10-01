@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% set active = "matrix" %}
+{% block title %}ATT&amp;CK matrix{% endblock %}
+{% block content %}
+<div class="h"><h1>ATT&amp;CK matrix</h1><div class="sub" id="sum-line">Loading techniques</div></div>
+
+<div class="sec glass">
+  <div class="panel-h"><h2>Technique heatmap</h2><div class="spacer"></div>
+    <span class="heat-legend">Dormant <i style="border-style:dashed"></i><i style="background:color-mix(in srgb, var(--sev-critical) 12%, transparent)"></i><i style="background:color-mix(in srgb, var(--sev-critical) 28%, transparent)"></i><i style="background:color-mix(in srgb, var(--sev-critical) 46%, transparent)"></i> Hot</span>
+  </div>
+  <div class="matrix-scroll"><div class="matrix" id="matrix"></div>
+    <div class="empty" id="matrix-empty" hidden>No technique data yet.<br>Techniques light up as events with a MITRE mapping arrive.</div></div>
+</div>
+<p class="note-p meta" id="unmapped" hidden></p>
+
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-h"><span class="chip mono" id="d-id"></span><div class="title" id="d-name"></div><button class="btn sm" id="d-close">Close</button></div>
+  <div class="drawer-b">
+    <div class="kv" id="d-kv" style="margin-bottom:18px"></div>
+    <h3>Recent events with this technique</h3>
+    <div class="glass" style="border-radius:10px"><div class="tbl"><table><thead><tr><th>Time</th><th>Source IP</th><th>Event type</th></tr></thead><tbody id="d-events"></tbody></table>
+      <div class="empty" id="d-empty" hidden>Not observed yet.</div></div></div>
+    <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+      <a class="btn" id="d-filter" href="/">Open in event feed</a>
+      <a class="btn" id="d-link" target="_blank" rel="noopener">View on attack.mitre.org</a>
+    </div>
+  </div>
+</aside>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  "use strict";
+  const { $, $$, esc, fmtTime, api, plural, enter } = HT;
+  let data = null, sel = null;
+
+  function render() {
+    const root = $("#matrix");
+    if (!data || !data.techniques.length) { root.innerHTML = ""; $("#matrix-empty").hidden = false; return; }
+    $("#matrix-empty").hidden = true;
+    const max = Math.max(1, ...data.techniques.map(t => t.count));
+    const by = {}; data.techniques.forEach(t => (by[t.tactic] = by[t.tactic] || []).push(t));
+    root.innerHTML = data.tactics.map(tac => {
+      const ts = by[tac] || [], act = ts.filter(t => t.count).length;
+      return `<div class="tactic"><div class="tactic-h">${esc(tac)}<span class="n">${act}/${ts.length}</span></div>` + ts.map(t => {
+        const heat = t.count ? (0.08 + Math.sqrt(t.count) / Math.sqrt(max) * 0.38).toFixed(3) : 0;
+        return `<button class="tech${t.count ? "" : " dormant"}${t.id === sel ? " sel" : ""}" data-id="${esc(t.id)}" title="${esc(t.id)}: ${esc(t.name)} (${t.count})">` +
+          (t.count ? `<span class="heat" style="opacity:${heat}"></span>` : "") +
+          `<span class="tid">${esc(t.id)}<span class="count">${t.count}</span></span><span class="tname">${esc(t.name)}</span></button>`;
+      }).join("") + `</div>`;
+    }).join("");
+    const active = data.techniques.filter(t => t.count).length;
+    const hot = data.techniques.reduce((a, b) => b.count > (a ? a.count : 0) ? b : a, null);
+    $("#sum-line").innerHTML = `<b>${data.total_mapped.toLocaleString()}</b> mapped observations · <b>${active}</b> of ${data.techniques.length} techniques triggered` + (hot && hot.count ? ` · hottest <b>${esc(hot.id)}</b> ${esc(hot.name)}` : "");
+    const um = $("#unmapped");
+    um.hidden = !(data.unmapped && data.unmapped.length);
+    if (!um.hidden) um.textContent = "Technique ids in the events table that are not in the catalog: " + data.unmapped.map(u => `${u.id} (${u.count})`).join(", ");
+    enter("matrix", $$(".tech", root));
+  }
+
+  async function openTech(id) {
+    const t = data.techniques.find(x => x.id === id); if (!t) return;
+    sel = id; $$(".tech").forEach(b => b.classList.toggle("sel", b.dataset.id === id));
+    $("#d-id").textContent = t.id; $("#d-name").textContent = t.name;
+    $("#d-kv").innerHTML = [["Tactic", t.tactic], ["Observed", plural(t.count, "event")], ["Last seen", t.count ? fmtTime(t.last_seen) : "never"]]
+      .map(([k, v]) => `<span class="k">${k}</span><span class="v sans">${esc(v)}</span>`).join("");
+    const [base, sub] = t.id.split(".");
+    $("#d-link").href = `https://attack.mitre.org/techniques/${encodeURIComponent(base)}/${sub ? encodeURIComponent(sub) + "/" : ""}`;
+    $("#d-filter").href = "/?mitre=" + encodeURIComponent(t.id);
+    const dr = $("#drawer"); dr.classList.add("open"); dr.setAttribute("aria-hidden", "false");
+    $("#d-events").innerHTML = ""; $("#d-empty").hidden = true;
+    try {
+      const ev = await api("/api/events?mitre=" + encodeURIComponent(t.id) + "&sort=desc");
+      $("#d-events").innerHTML = ev.slice(0, 12).map(e => `<tr><td class="mono faint">${fmtTime(e.timestamp)}</td><td class="mono">${esc(e.ip || "-")}</td><td class="dim">${esc(e.type)}</td></tr>`).join("");
+      $("#d-empty").hidden = ev.length > 0;
+    } catch (e) { $("#d-empty").hidden = false; }
+  }
+  const close = () => { const dr = $("#drawer"); dr.classList.remove("open"); dr.setAttribute("aria-hidden", "true"); sel = null; $$(".tech.sel").forEach(b => b.classList.remove("sel")); };
+  $("#matrix").addEventListener("click", e => { const b = e.target.closest(".tech[data-id]"); if (b) openTech(b.dataset.id); });
+  $("#d-close").addEventListener("click", close);
+  document.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+
+  async function load() { try { data = await api("/api/attack-matrix"); } catch (e) { return; } render(); }
+  load();
+  setInterval(() => { if (!document.hidden) load(); }, 15000);
+})();
+</script>
+{% endblock %}

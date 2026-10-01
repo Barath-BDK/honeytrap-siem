@@ -1,0 +1,27 @@
+# secrets and local config
+.env
+*.env.local
+
+# runtime data (attacker input, never commit)
+*.db
+*.db-journal
+siem/synced_logs/
+siem/offsets.json
+honeypot/logs/
+logs/
+
+# generated SSH host key of the honeypot
+honeypot/ssh_host_key
+ssh_host_key
+
+# python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,370 @@
+{% extends "base.html" %}
+{% set active = "overview" %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<div class="h"><h1>Overview</h1><div class="sub">last <span id="win-label">24 h</span> · updated <span id="ov-updated">-</span></div></div>
+
+<div class="sec grid g-2-1">
+  <div class="glass chart-panel">
+    <div class="panel-h"><h2>Events over time</h2>
+      <span class="tl-nav"><button id="tl-prev" title="Earlier" aria-label="Earlier">‹</button><button id="tl-next" title="Later" aria-label="Later" disabled>›</button></span>
+      <span class="seg" id="tl-range"><button data-h="24" class="on">24h</button><button data-h="72">3d</button><button data-h="168">7d</button><button data-h="720">30d</button></span>
+      <span class="tl-when" id="tl-when"></span>
+      <button class="btn sm" id="tl-live" hidden>Back to live</button>
+      <div class="spacer"></div>
+      <div class="legend"><span><i style="background:var(--sev-critical)"></i>critical</span><span><i style="background:var(--sev-high)"></i>high</span><span><i style="background:var(--sev-medium)"></i>medium</span><span><i style="background:var(--sev-low)"></i>low</span><span><i style="background:var(--sev-info)"></i>info</span></div>
+    </div>
+    <svg class="timeline" id="timeline" viewBox="0 0 720 190" aria-label="Events per time bucket, stacked by severity"></svg>
+  </div>
+  <div class="glass">
+    <div class="panel-h"><h2>Breakdown</h2><div class="spacer"></div><span class="meta" id="bd-total"></span></div>
+    <div class="breakdown" id="breakdown">
+      <div class="bd"><span class="n"><span class="skel" style="width:60px"></span></span><span class="skel"></span><span></span></div>
+      <div class="bd"><span class="n"><span class="skel" style="width:50px"></span></span><span class="skel"></span><span></span></div>
+      <div class="bd"><span class="n"><span class="skel" style="width:56px"></span></span><span class="skel"></span><span></span></div>
+    </div>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="sec-h">
+    <h2>Event feed</h2><span class="meta" id="event-count"></span><div class="spacer"></div>
+    <div class="filters">
+      <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
+        <input type="text" id="f-search" placeholder="IP, command, credential, path" aria-label="Search events"></label>
+      <select id="f-severity" aria-label="Severity">
+        <option value="">Any severity</option><option value="critical">Critical</option><option value="high">High</option>
+        <option value="medium">Medium</option><option value="low">Low</option><option value="info">Info</option>
+      </select>
+      <select id="f-type" aria-label="Event type"><option value="">Any event type</option></select>
+      <select id="f-range" aria-label="Time range">
+        <option value="">All time</option><option value="15m">Last 15 min</option><option value="1h">Last hour</option>
+        <option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="custom">Custom range</option>
+      </select>
+      <span class="range-custom" id="range-custom">
+        <input type="datetime-local" id="f-from" step="1" aria-label="From"><span class="to">to</span><input type="datetime-local" id="f-to" step="1" aria-label="To">
+      </span>
+      <button class="btn" id="f-clear">Clear</button>
+    </div>
+  </div>
+  <div class="active-filters" id="active-filters" style="margin:0 2px 12px"></div>
+
+  <div class="workspace" id="workspace">
+    <div class="glass fields">
+      <div class="fields-h"><h2>Fields</h2><div class="spacer"></div>
+        <button id="fields-toggle" title="Collapse fields" aria-label="Collapse fields"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 2.5 4 6l3.5 3.5"/></svg></button></div>
+      <div class="fields-body" id="fields-body"></div>
+    </div>
+    <div class="glass">
+      <div class="tbl" style="max-height:calc(100vh - 210px)">
+        <table>
+          <thead><tr>
+            <th style="width:11px"></th>
+            <th class="sortable" id="th-time" aria-sort="descending">Time<span class="ind"></span></th>
+            <th>Severity</th><th>Event type</th><th>Source IP</th><th>MITRE</th><th>Details</th><th></th>
+          </tr></thead>
+          <tbody id="event-rows"></tbody>
+        </table>
+        <div class="empty" id="empty-msg" hidden>No events match these filters.<br>Clear a filter or widen the time range.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tl-tip" id="tl-tip"></div>
+
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-h"><span id="d-sev"></span><div class="title" id="d-title"></div>
+    <a class="btn sm" id="d-session" hidden>Open session</a>
+    <button class="btn sm" id="d-close" aria-label="Close">Close</button></div>
+  <div class="drawer-b">
+    <h3>What happened</h3><pre class="cmd" id="d-details"></pre>
+    <div class="kv" id="d-kv"></div>
+  </div>
+</aside>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  "use strict";
+  const { $, $$, esc, fmtTime, ago, api, num, sevTag, railMark, mitreChip, plural, skelRows, rangeParams, enter, store } = HT;
+
+  const SEVS = ["critical", "high", "medium", "low", "info"];
+  const KNOWN_TYPES = ["ssh_connect", "ssh_auth_attempt", "ssh_brute_force_confirmed", "ssh_command", "web_admin_probe", "web_env_probe",
+    "web_phpmyadmin_probe", "web_robots_probe", "web_404_probe", "web_git_probe", "web_backup_probe", "web_api_probe", "web_registry_probe"];
+  const FIELD_ORDER = ["severity", "type", "source", "ip", "category", "mitre"];
+  const FIELD_LABELS = { severity: "Severity", type: "Event type", source: "Surface", ip: "Source IP", category: "Category", mitre: "MITRE technique" };
+
+  let sortDir = "desc";
+  const activeFields = {};
+  const openFields = new Set(["severity", "ip"]);
+  let lastSummary = {}, lastEvents = [], ovUpdated = null;
+
+  /* ---------------- type dropdown ---------------- */
+  const typeSel = $("#f-type");
+  const typeSet = new Set(KNOWN_TYPES);
+  function syncTypeOptions(extra) {
+    (extra || []).forEach(t => typeSet.add(t));
+    const keep = typeSel.value;
+    typeSel.innerHTML = `<option value="">Any event type</option>` + [...typeSet].sort().map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+    typeSel.value = keep;
+  }
+  syncTypeOptions();
+
+  /* ---------------- params ---------------- */
+  function buildParams(forSummary) {
+    const params = new URLSearchParams();
+    const q = $("#f-search").value.trim(), sev = $("#f-severity").value, type = typeSel.value;
+    if (q) params.set("q", q);
+    if (sev) params.set("severity", sev);
+    if (type) params.set("type", type);
+    rangeParams(params, $("#f-range"), $("#f-from"), $("#f-to"));
+    for (const [k, v] of Object.entries(activeFields)) {
+      if ((k === "severity" && sev) || (k === "type" && type)) continue;
+      params.set(k, v);
+    }
+    if (!forSummary) params.set("sort", sortDir);
+    return params;
+  }
+
+  /* ---------------- active filter chips ---------------- */
+  const X = `<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 3l6 6M9 3l-6 6"/></svg>`;
+  function renderChips() {
+    $("#active-filters").innerHTML = Object.entries(activeFields).map(([k, v]) =>
+      `<span class="fchip"><span class="k">${esc(FIELD_LABELS[k] || k)}</span><span class="v">${esc(v)}</span><button data-remove="${esc(k)}" aria-label="Remove filter">${X}</button></span>`).join("");
+  }
+  function setField(key, value) {
+    if (activeFields[key] === value) delete activeFields[key]; else activeFields[key] = value;
+    if (key === "severity") $("#f-severity").value = activeFields.severity || "";
+    if (key === "type") typeSel.value = activeFields.type || "";
+    renderChips(); refreshEvents(); refreshFields();
+  }
+  function removeField(key) {
+    delete activeFields[key];
+    if (key === "severity") $("#f-severity").value = "";
+    if (key === "type") typeSel.value = "";
+    renderChips(); refreshEvents(); refreshFields();
+  }
+  $("#active-filters").addEventListener("click", e => { const b = e.target.closest("button[data-remove]"); if (b) removeField(b.dataset.remove); });
+
+  /* ---------------- fields panel ---------------- */
+  const CHEV = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2 6.5 5 3.5 8"/></svg>`;
+  function renderFields(summary) {
+    $("#fields-body").innerHTML = FIELD_ORDER.map(key => {
+      const info = summary[key]; if (!info) return "";
+      const max = Math.max(1, ...info.top.map(t => t.count));
+      const vals = info.top.map(t => {
+        const val = String(t.value), on = activeFields[key] === val ? " on" : "";
+        return `<div class="fval${on}" data-field="${esc(key)}" data-value="${esc(val)}"><span class="fv" title="${esc(val)}">${esc(val)}</span>` +
+          `<span class="fbar"><i style="width:${(t.count / max * 100).toFixed(1)}%"></i></span><span class="fc">${t.count}</span></div>`;
+      }).join("") || `<div class="fval" style="cursor:default"><span class="fv" style="font-family:var(--sans)">no values</span></div>`;
+      return `<div class="fgroup${openFields.has(key) ? " open" : ""}"><div class="fname" data-group="${esc(key)}">${CHEV}<span>${esc(FIELD_LABELS[key])}</span><span class="fd">${info.distinct}</span></div><div class="fvals">${vals}</div></div>`;
+    }).join("");
+  }
+  $("#fields-body").addEventListener("click", e => {
+    const v = e.target.closest(".fval[data-field]"); if (v) { setField(v.dataset.field, v.dataset.value); return; }
+    const g = e.target.closest(".fname"); if (g) { const k = g.dataset.group; openFields.has(k) ? openFields.delete(k) : openFields.add(k); renderFields(lastSummary); }
+  });
+  const ws = $("#workspace");
+  if (store.get("ht-fields", "") === "collapsed") ws.classList.add("fields-collapsed");
+  $("#fields-toggle").addEventListener("click", () => {
+    const c = ws.classList.toggle("fields-collapsed");
+    store.set("ht-fields", c ? "collapsed" : null);
+    $("#fields-toggle").title = c ? "Expand fields" : "Collapse fields";
+  });
+  async function refreshFields() {
+    try { lastSummary = await api("/api/field-summary?" + buildParams(true)); } catch (e) { return; }
+    renderFields(lastSummary);
+    if (lastSummary.type) syncTypeOptions(lastSummary.type.top.map(t => t.value));
+  }
+
+  /* ---------------- event feed ---------------- */
+  let firstPaint = true, seenIds = new Set();
+  async function refreshEvents() {
+    let events; try { events = await api("/api/events?" + buildParams()); } catch (e) { return; }
+    lastEvents = events;
+    const tbody = $("#event-rows");
+    $("#event-count").textContent = plural(events.length, "event") + (events.length >= 200 ? " (latest 200)" : "");
+    $("#empty-msg").hidden = events.length > 0;
+    const fresh = firstPaint ? new Set() : new Set(events.filter(e => !seenIds.has(e.id)).map(e => e.id));
+    tbody.innerHTML = events.map((e, i) => {
+      const sev = e.severity_label || "info";
+      return `<tr class="clickable${fresh.has(e.id) ? " new" : ""}" data-i="${i}">
+        <td class="rail-cell">${railMark(sev)}</td>
+        <td class="mono faint">${fmtTime(e.timestamp)}</td>
+        <td>${sevTag(sev)}</td>
+        <td class="dim">${esc(e.type)}</td>
+        <td class="mono">${e.ip ? esc(e.ip) : '<span class="dash">-</span>'}</td>
+        <td>${mitreChip(e.mitre_technique)}</td>
+        <td class="details" title="${esc(e.details)}">${esc(e.details)}</td>
+        <td class="chev">›</td></tr>`;
+    }).join("");
+    events.forEach(e => seenIds.add(e.id));
+    if (firstPaint && events.length) { firstPaint = false; enter("feed", $$("tr", tbody).slice(0, 18)); }
+    refreshFields();
+  }
+  $("#event-rows").innerHTML = skelRows(8, 8);
+
+  $("#th-time").addEventListener("click", () => {
+    sortDir = sortDir === "desc" ? "asc" : "desc";
+    $("#th-time").classList.toggle("asc", sortDir === "asc");
+    $("#th-time").setAttribute("aria-sort", sortDir === "asc" ? "ascending" : "descending");
+    refreshEvents();
+  });
+
+  /* ---------------- drawer ---------------- */
+  const drawer = $("#drawer");
+  function openDrawer(e) {
+    const sev = e.severity_label || "info";
+    $("#d-sev").innerHTML = sevTag(sev);
+    $("#d-title").textContent = e.type;
+    $("#d-details").textContent = e.details || "-";
+    const rows = [["Time", fmtTime(e.timestamp)], ["Surface", e.source || "-"], ["Source IP", e.ip || "-"], ["Category", e.category || "-"],
+      ["MITRE", e.mitre_technique || "-"], ["Session", e.session_id || (e.source === "web" && e.ip ? "web:" + e.ip : "-")], ["Event id", "#" + e.id]];
+    $("#d-kv").innerHTML = rows.map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span>`).join("");
+    const sid = e.session_id || (e.source === "web" && e.ip ? "web:" + e.ip : "");
+    const link = $("#d-session"); link.hidden = !sid; if (sid) link.href = "/sessions/" + encodeURIComponent(sid);
+    drawer.classList.add("open"); drawer.setAttribute("aria-hidden", "false");
+  }
+  const closeDrawer = () => { drawer.classList.remove("open"); drawer.setAttribute("aria-hidden", "true"); $$("#event-rows tr.selected").forEach(r => r.classList.remove("selected")); };
+  $("#d-close").addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && drawer.classList.contains("open")) closeDrawer(); });
+  $("#event-rows").addEventListener("click", e => {
+    const tr = e.target.closest("tr[data-i]"); if (!tr) return;
+    $$("#event-rows tr.selected").forEach(r => r.classList.remove("selected")); tr.classList.add("selected");
+    openDrawer(lastEvents[+tr.dataset.i]);
+  });
+
+  /* ---------------- filters wiring ---------------- */
+  ["f-severity", "f-type"].forEach(id => $("#" + id).addEventListener("change", () => {
+    const v = $("#" + id).value, key = id === "f-severity" ? "severity" : "type";
+    if (v) activeFields[key] = v; else delete activeFields[key];
+    renderChips(); refreshEvents();
+  }));
+  $("#f-range").addEventListener("change", () => {
+    const custom = $("#f-range").value === "custom";
+    $("#range-custom").classList.toggle("show", custom);
+    if (!custom) refreshEvents();
+  });
+  ["f-from", "f-to"].forEach(id => $("#" + id).addEventListener("change", refreshEvents));
+  let deb; $("#f-search").addEventListener("input", () => { clearTimeout(deb); deb = setTimeout(refreshEvents, 300); });
+  $("#f-clear").addEventListener("click", () => {
+    $("#f-search").value = ""; $("#f-severity").value = ""; typeSel.value = ""; $("#f-range").value = "";
+    $("#f-from").value = ""; $("#f-to").value = ""; $("#range-custom").classList.remove("show");
+    Object.keys(activeFields).forEach(k => delete activeFields[k]);
+    renderChips(); refreshEvents();
+  });
+
+  /* ---------------- timeline + breakdown ---------------- */
+  let tlHours = 24, tlEnd = null, tlEarliest = null, tlData = null;
+  const toLocalInput = d => { const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
+
+  async function loadOverview() {
+    const qs = new URLSearchParams({ hours: tlHours }); if (tlEnd) qs.set("end", tlEnd.toISOString());
+    let r; try { r = await api("/api/overview?" + qs); } catch (e) { return; }
+    tlData = r; tlEarliest = r.earliest ? new Date(r.earliest) : null; ovUpdated = Date.now();
+    drawTimeline(r); drawBreakdown(r);
+    $("#win-label").textContent = tlHours >= 168 ? (tlHours / 24) + " d" : tlHours + " h";
+    const start = new Date(r.start), end = new Date(r.end);
+    $("#tl-when").textContent = tlEnd ? `${fmtTime(start, false)} to ${fmtTime(end, false)}` : "";
+    $("#tl-live").hidden = !tlEnd; $("#tl-next").disabled = !tlEnd;
+    $("#tl-prev").disabled = !!tlEarliest && start <= tlEarliest;
+  }
+
+  function drawTimeline(r) {
+    // size the drawing to the real box so text never stretches
+    const svg = $("#timeline"), box = svg.getBoundingClientRect();
+    const W = Math.max(320, Math.round(box.width - 24)), H = Math.max(150, Math.round(box.height - 18)), padL = 30, padR = 6, padT = 8, padB = 20;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const b = r.buckets, n = b.length;
+    const totals = b.map(x => SEVS.reduce((a, s) => a + (x[s] || 0), 0));
+    const max = Math.max(1, ...totals);
+    const raw = max / 4, pw = Math.pow(10, Math.floor(Math.log10(Math.max(raw, 1))));
+    const step = Math.max(1, [1, 2, 5, 10].map(m => m * pw).find(s => s >= raw) || 10 * pw);
+    const nice = step * 4;
+    const cw = (W - padL - padR) / n, bw = Math.max(1, cw * .68);
+    const y = v => padT + (H - padT - padB) * (1 - v / nice);
+    let out = "";
+    for (let g = 0; g <= 4; g++) {
+      const v = nice * g / 4, yy = y(v);
+      out += `<line class="gridline" x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}"/><text class="axis" x="${padL - 6}" y="${yy + 3}" text-anchor="end">${Math.round(v)}</text>`;
+    }
+    const labelEvery = Math.ceil(n / 8);
+    b.forEach((x, i) => {
+      const x0 = padL + i * cw + (cw - bw) / 2; let acc = 0, rects = "";
+      [...SEVS].reverse().forEach(s => { const v = x[s] || 0; if (!v) return;
+        const y1 = y(acc + v), y0 = y(acc); rects += `<rect x="${x0.toFixed(1)}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0, y0 - y1).toFixed(1)}" rx="1.5" fill="var(--sev-${s})"/>`; acc += v; });
+      out += `<g class="col" data-i="${i}"><rect class="hit" x="${(padL + i * cw).toFixed(1)}" y="${padT}" width="${cw.toFixed(1)}" height="${H - padT - padB}"/>${rects}</g>`;
+      if (i % labelEvery === 0) {
+        const d = new Date(x.t), lbl = r.bucket_minutes >= 1440 ? `${d.getDate()}/${d.getMonth() + 1}` : `${String(d.getHours()).padStart(2, "0")}:00`;
+        out += `<text class="axis" x="${(padL + i * cw + cw / 2).toFixed(1)}" y="${H - 5}" text-anchor="middle">${lbl}</text>`;
+      }
+    });
+    if (!totals.some(Boolean)) out += `<text class="axis" x="${W / 2}" y="${H / 2}" text-anchor="middle">No events in this window</text>`;
+    svg.innerHTML = out;
+  }
+
+  const tip = $("#tl-tip");
+  $("#timeline").addEventListener("mousemove", e => {
+    const g = e.target.closest(".col"); if (!g || !tlData) { tip.classList.remove("show"); return; }
+    const x = tlData.buckets[+g.dataset.i], d = new Date(x.t), end = new Date(d.getTime() + tlData.bucket_minutes * 60000);
+    const total = SEVS.reduce((a, s) => a + (x[s] || 0), 0);
+    tip.innerHTML = `<div class="tt">${esc(fmtTime(d, false))} to ${esc(fmtTime(end, false))}</div>` +
+      SEVS.filter(s => x[s]).map(s => `<div class="row"><i style="background:var(--sev-${s})"></i>${s}<b>${x[s]}</b></div>`).join("") +
+      `<div class="row" style="margin-top:3px;color:var(--fg-3)">${total ? "Click to filter the feed" : "No events"}</div>`;
+    tip.style.left = Math.min(innerWidth - 200, e.clientX + 14) + "px"; tip.style.top = (e.clientY + 14) + "px"; tip.classList.add("show");
+  });
+  $("#timeline").addEventListener("mouseleave", () => tip.classList.remove("show"));
+  $("#timeline").addEventListener("click", e => {
+    const g = e.target.closest(".col"); if (!g || !tlData) return;
+    const d = new Date(tlData.buckets[+g.dataset.i].t), end = new Date(d.getTime() + tlData.bucket_minutes * 60000 - 1000);
+    $("#f-range").value = "custom"; $("#range-custom").classList.add("show");
+    $("#f-from").value = toLocalInput(d); $("#f-to").value = toLocalInput(end);
+    refreshEvents();
+    $("#event-rows").closest(".sec").scrollIntoView({ behavior: HT.reduceMotion ? "auto" : "smooth", block: "start" });
+  });
+
+  function drawBreakdown(r) {
+    const sevMax = Math.max(1, ...SEVS.map(s => r.severity[s] || 0));
+    const srcTotal = Math.max(1, (r.surface.ssh || 0) + (r.surface.web || 0));
+    const row = (label, v, max, cls) => `<div class="bd"><span class="n">${esc(label)}</span><div class="bar ${cls}"><i data-w="${(v / max * 100).toFixed(1)}"></i></div><span class="c">${v.toLocaleString()}</span></div>`;
+    $("#breakdown").innerHTML =
+      SEVS.map(s => row(s, r.severity[s] || 0, sevMax, s)).join("") +
+      `<h3>By surface</h3>` + row("SSH", r.surface.ssh || 0, srcTotal, "white") + row("Web", r.surface.web || 0, srcTotal, "white") +
+      `<h3>Sources</h3>` + row("Unique IPs", r.unique_ips || 0, Math.max(1, r.unique_ips || 0), "live");
+    requestAnimationFrame(() => $$("#breakdown .bar i").forEach(i => { i.style.width = i.dataset.w + "%"; }));
+    $("#bd-total").textContent = plural(r.total, "event");
+  }
+
+  $("#tl-range").addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    tlHours = +b.dataset.h; tlEnd = null;
+    $$("#tl-range button").forEach(x => x.classList.toggle("on", x === b)); loadOverview();
+  });
+  $("#tl-prev").addEventListener("click", () => { const end = tlEnd || new Date(); tlEnd = new Date(end.getTime() - tlHours * 3600000); loadOverview(); });
+  $("#tl-next").addEventListener("click", () => { if (!tlEnd) return; const n = new Date(tlEnd.getTime() + tlHours * 3600000); tlEnd = n >= new Date() ? null : n; loadOverview(); });
+  $("#tl-live").addEventListener("click", () => { tlEnd = null; loadOverview(); });
+
+  // redraw whenever the chart box changes size (layout settles, window resizes, rail collapses)
+  let rz; new ResizeObserver(() => { clearTimeout(rz); rz = setTimeout(() => tlData && drawTimeline(tlData), 60); }).observe($("#timeline"));
+  setInterval(() => { $("#ov-updated").textContent = ovUpdated ? ago(ovUpdated) : "-"; }, 1000);
+
+  window.HT_CMDS = [
+    { g: "Filter", l: "Show critical events", run: () => setField("severity", "critical") },
+    { g: "Filter", l: "Show high events", run: () => setField("severity", "high") },
+    { g: "Filter", l: "Clear all filters", run: () => $("#f-clear").click() },
+  ];
+
+  // deep links such as /?mitre=T1190 or /?ip=1.2.3.4 pre-apply a field filter
+  const qs = new URLSearchParams(location.search);
+  FIELD_ORDER.forEach(k => { const v = qs.get(k); if (v) activeFields[k] = v; });
+  if (activeFields.severity) $("#f-severity").value = activeFields.severity;
+  if (activeFields.type) { syncTypeOptions([activeFields.type]); typeSel.value = activeFields.type; }
+  renderChips();
+
+  refreshEvents(); loadOverview();
+  setInterval(() => { if (document.hidden) return; refreshEvents(); if (!tlEnd) loadOverview(); }, 5000);
+})();
+</script>
+{% endblock %}

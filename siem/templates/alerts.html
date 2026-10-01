@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% set active = "alerts" %}
+{% block title %}Alerts{% endblock %}
+{% block content %}
+<div class="h"><h1>Alerts</h1><div class="sub" id="sum-line">Loading alerts</div><div class="spacer"></div>
+  <div class="filters">
+    <select id="f-sev" aria-label="Severity"><option value="">Any severity</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="info">Info</option></select>
+    <select id="f-status" aria-label="Case status"><option value="open">Open only</option><option value="">Any status</option><option value="new">New</option><option value="investigating">Investigating</option><option value="resolved">Resolved</option></select>
+    <label class="fl">Sort <select id="f-sort"><option value="desc">Newest first</option><option value="asc">Oldest first</option></select></label>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="glass"><div class="tbl" style="max-height:calc(100vh - 200px)">
+    <table>
+      <thead><tr><th style="width:11px"></th><th>Severity</th><th>Rule</th><th>Title</th><th>Source IP</th><th>Events</th><th>MITRE</th><th>Detected</th><th>Case</th><th></th></tr></thead>
+      <tbody id="alert-rows"></tbody>
+    </table>
+    <div class="empty" id="alerts-empty" hidden>No alerts match.<br>The detection engine raises alerts as it correlates attack patterns across events.</div>
+  </div></div>
+  <p class="note-p meta" style="margin:12px 2px 0">Alerts are separate objects from events. Built-in rules flag kill-chain completion inside one SSH session and the same IP attacking both surfaces; your own threshold rules from Detection rules land here too.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  "use strict";
+  const { $, $$, esc, fmtTime, api, sevTag, statusTag, railMark, mitreChip, skelRows, enter } = HT;
+  let all = [];
+
+  function render() {
+    const sev = $("#f-sev").value, st = $("#f-status").value;
+    const rows = all.filter(a => (!sev || a.severity_label === sev) &&
+      (!st || (st === "open" ? a.alert_status !== "resolved" : a.alert_status === st)));
+    const open = all.filter(a => a.alert_status !== "resolved").length;
+    const crit = all.filter(a => a.alert_status !== "resolved" && (a.severity_label === "critical" || a.severity_label === "high")).length;
+    $("#sum-line").innerHTML = `<b>${open}</b> open · <b>${crit}</b> critical or high · ${all.length} total`;
+    $("#alerts-empty").hidden = rows.length > 0;
+    const tbody = $("#alert-rows");
+    tbody.innerHTML = rows.map(a => {
+      const s = a.severity_label || "info";
+      const techs = (a.mitre_techniques || []).slice(0, 3).map(mitreChip).join(" ") + ((a.mitre_techniques || []).length > 3 ? ` <span class="chip dim">+${a.mitre_techniques.length - 3}</span>` : "");
+      return `<tr class="clickable" data-id="${esc(a.id)}">
+        <td class="rail-cell">${railMark(s)}</td><td>${sevTag(s)}</td>
+        <td class="wrap dim" style="min-width:130px;font-size:12.5px">${esc(a.rule_name)}</td><td class="wrap" style="min-width:220px">${esc(a.title)}</td>
+        <td class="mono">${a.ip ? esc(a.ip) : '<span class="dash">-</span>'}</td><td>${a.event_count}</td>
+        <td>${techs || '<span class="dash">-</span>'}</td><td class="mono faint">${fmtTime(a.created_at)}</td>
+        <td>${statusTag(a.alert_status)}</td><td class="chev">›</td></tr>`;
+    }).join("");
+    enter("alerts", $$("tr", tbody).slice(0, 16));
+  }
+  async function load() {
+    try { all = await api("/api/alerts?sort=" + $("#f-sort").value); } catch (e) { return; }
+    render();
+  }
+  $("#alert-rows").addEventListener("click", e => { const tr = e.target.closest("tr[data-id]"); if (tr) location.href = "/alerts/" + encodeURIComponent(tr.dataset.id); });
+  $("#f-sort").addEventListener("change", load);
+  ["#f-sev", "#f-status"].forEach(s => $(s).addEventListener("change", render));
+  window.HT_CMDS = [{ g: "Filter", l: "Show all alerts including resolved", run: () => { $("#f-status").value = ""; render(); } }];
+  $("#alert-rows").innerHTML = skelRows(6, 10);
+  load();
+  setInterval(() => { if (!document.hidden) load(); }, 15000);
+})();
+</script>
+{% endblock %}

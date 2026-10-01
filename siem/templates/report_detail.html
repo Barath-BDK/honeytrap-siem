@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% set active = "reports" %}
+{% block title %}Report{% endblock %}
+{% block content %}
+<a class="back no-print" href="/reports"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 2.5 4 6l3.5 3.5"/></svg>Reports</a>
+<div class="h"><h1 id="r-title">Report</h1><div class="sub" id="r-sub">Loading</div><div class="spacer"></div>
+  <button class="btn no-print" id="print-btn">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2"/><path d="M6 14h12v7H6z"/></svg>
+    Print</button>
+</div>
+
+<div class="sec glass">
+  <div class="panel-h"><h2>Incident summary</h2><div class="spacer"></div><span id="r-sev"></span></div>
+  <div class="panel-b">
+    <p class="narrative" id="summary-text" style="margin:0">-</p>
+    <div class="callout"><b>Recommended action</b><span id="rec-action">-</span></div>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="sec-h"><h2>Indicators of compromise</h2><div class="spacer"></div><span class="meta">Raw attacker input, handle as hostile data</span></div>
+  <div class="grid g-3">
+    <div class="glass ioc panel-b"><h3>Credential pairs attempted</h3><div id="ioc-creds"></div></div>
+    <div class="glass ioc panel-b"><h3>Commands and payloads</h3><div id="ioc-cmds"></div></div>
+    <div class="glass ioc panel-b"><h3>Paths probed</h3><div id="ioc-paths"></div></div>
+  </div>
+</div>
+
+<div class="sec glass">
+  <div class="panel-h"><h2>MITRE ATT&amp;CK techniques observed</h2></div>
+  <div class="panel-b"><div class="chips" id="mitre-list"></div></div>
+</div>
+
+<div class="sec glass">
+  <div class="panel-h"><h2>Timeline</h2><span class="meta" id="event-count"></span><div class="spacer"></div><span class="meta">Oldest first, pulled live from the events table</span></div>
+  <div class="tbl" style="margin-top:10px">
+    <table>
+      <thead><tr><th style="width:11px"></th><th>Time</th><th>Severity</th><th>Event type</th><th>MITRE</th><th>Details</th></tr></thead>
+      <tbody id="event-rows"></tbody>
+    </table>
+    <div class="empty" id="empty-msg" hidden>Report not found.</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  "use strict";
+  const { $, $$, esc, fmtTime, api, sevTag, railMark, mitreChip, plural, skelRows, enter } = HT;
+  const REPORT_ID = location.pathname.split("/").filter(Boolean).pop();
+  document.title = `Report #${REPORT_ID} · Honeytrap SIEM`;
+  const iocList = items => items && items.length ? `<ul>${items.map(i => `<li>${esc(i)}</li>`).join("")}</ul>` : `<div class="none">None observed</div>`;
+
+  async function load() {
+    let d;
+    try { d = await api("/api/reports/" + encodeURIComponent(REPORT_ID)); }
+    catch (e) { $("#event-rows").innerHTML = ""; $("#empty-msg").hidden = false; $("#r-title").textContent = `Report #${REPORT_ID}`; $("#r-sub").textContent = "Not found"; $("#summary-text").textContent = "This report does not exist."; return; }
+    $("#r-title").textContent = `Report #${d.id}`;
+    $("#r-sub").innerHTML = `Session <a href="/sessions/${encodeURIComponent(d.session_id)}" style="color:var(--fg-2);font-family:var(--mono);font-size:12.5px">${esc(d.session_id)}</a> · <b>${esc(d.ip || "-")}</b> · ${plural(d.event_count, "event")} · ${esc(fmtTime(d.first_seen))} to ${esc(fmtTime(d.last_seen))} · generated ${esc(fmtTime(d.generated_at))}`;
+    $("#r-sev").innerHTML = sevTag(d.max_severity_label || "info");
+    $("#summary-text").textContent = d.summary_text || "-";
+    $("#rec-action").textContent = d.recommended_action || "-";
+    const iocs = d.iocs || {};
+    $("#ioc-creds").innerHTML = iocList(iocs.credentials); $("#ioc-cmds").innerHTML = iocList(iocs.commands); $("#ioc-paths").innerHTML = iocList(iocs.paths);
+    const techs = d.mitre_techniques || [];
+    $("#mitre-list").innerHTML = techs.length ? techs.map(t => `<a class="chip mono" target="_blank" rel="noopener" href="https://attack.mitre.org/techniques/${encodeURIComponent(t.id.split(".")[0])}/${t.id.includes(".") ? encodeURIComponent(t.id.split(".")[1]) + "/" : ""}">${esc(t.id)}<span class="cnt">×${t.count}</span></a>`).join("") : `<span class="meta">No techniques mapped in this session</span>`;
+    const ev = d.events || [];
+    $("#event-count").textContent = plural(ev.length, "event");
+    const tbody = $("#event-rows");
+    tbody.innerHTML = ev.map(e => { const s = e.severity_label || "info";
+      return `<tr><td class="rail-cell">${railMark(s)}</td><td class="mono faint">${fmtTime(e.timestamp)}</td><td>${sevTag(s)}</td><td class="dim">${esc(e.type)}</td><td>${mitreChip(e.mitre_technique)}</td><td class="details" title="${esc(e.details)}">${esc(e.details)}</td></tr>`; }).join("");
+    enter("events", $$("tr", tbody).slice(0, 20));
+  }
+  $("#print-btn").addEventListener("click", () => window.print());
+  window.HT_CMDS = [{ g: "Action", l: "Print this report", run: () => window.print() }];
+  $("#event-rows").innerHTML = skelRows(6, 6);
+  load();
+})();
+</script>
+{% endblock %}

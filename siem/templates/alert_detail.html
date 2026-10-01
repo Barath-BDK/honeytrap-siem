@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% set active = "alerts" %}
+{% block title %}Alert{% endblock %}
+{% block content %}
+<a class="back" href="/alerts"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 2.5 4 6l3.5 3.5"/></svg>Alerts</a>
+<div class="h"><h1 id="a-title">Alert</h1><div class="sub" id="a-sub">Loading</div></div>
+
+<div class="sec glass">
+  <div class="panel-h"><h2>Why this fired</h2><div class="spacer"></div><span id="a-sev"></span></div>
+  <div class="panel-b">
+    <p class="narrative" id="a-description" style="margin:0">-</p>
+    <div class="chips" id="a-mitre" style="margin-top:14px"></div>
+  </div>
+</div>
+
+<div class="sec grid g-2-1">
+  <div class="glass">
+    <div class="panel-h"><h2>Contributing events</h2><span class="meta" id="event-count"></span><div class="spacer"></div><span class="meta">The exact events behind this alert</span></div>
+    <div class="tbl" style="margin-top:10px;max-height:calc(100vh - 280px)">
+      <table>
+        <thead><tr><th style="width:11px"></th><th>Time</th><th>Severity</th><th>Event type</th><th>MITRE</th><th>Details</th></tr></thead>
+        <tbody id="event-rows"></tbody>
+      </table>
+      <div class="empty" id="empty-msg" hidden>Alert not found.</div>
+    </div>
+  </div>
+  <div>
+    <div class="glass" style="margin-bottom:14px">
+      <div class="panel-h"><h2>Case</h2><div class="spacer"></div><span id="a-status"></span></div>
+      <div class="panel-b form-stack">
+        <div><label class="field-l" for="case-status">Status</label>
+          <select id="case-status"><option value="new">New</option><option value="investigating">Investigating</option><option value="resolved">Resolved</option></select></div>
+        <div><label class="field-l" for="case-notes">Analyst notes</label>
+          <textarea id="case-notes" placeholder="Triage findings, actions taken"></textarea></div>
+        <div class="form-actions"><button class="btn primary" id="case-save">Save case</button><span class="save-msg" id="save-msg"></span></div>
+      </div>
+    </div>
+    <div class="glass">
+      <div class="panel-h"><h2>Details</h2></div>
+      <div class="panel-b"><div class="kv" id="a-kv"></div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  "use strict";
+  const { $, $$, esc, fmtTime, api, toast, sevTag, statusTag, railMark, mitreChip, plural, skelRows, enter, STATUSES } = HT;
+  const ALERT_ID = location.pathname.split("/").filter(Boolean).pop();
+  document.title = `Alert #${ALERT_ID} · Honeytrap SIEM`;
+  let formInit = false;
+
+  async function load() {
+    let d;
+    try { d = await api("/api/alerts/" + encodeURIComponent(ALERT_ID)); }
+    catch (e) { $("#event-rows").innerHTML = ""; $("#empty-msg").hidden = false; $("#a-title").textContent = `Alert #${ALERT_ID}`; $("#a-sub").textContent = "Not found"; $("#a-description").textContent = "This alert does not exist or was cleared."; return; }
+    const sev = d.severity_label || "info";
+    $("#a-title").textContent = d.title || `Alert #${ALERT_ID}`;
+    $("#a-sub").innerHTML = `#${esc(d.id)} · <b>${esc(d.rule_name)}</b> · ${esc(d.ip || "-")} · ${esc(fmtTime(d.created_at))}`;
+    $("#a-sev").innerHTML = sevTag(sev);
+    $("#a-status").innerHTML = statusTag(d.alert_status);
+    $("#a-description").textContent = d.description || "-";
+    $("#a-mitre").innerHTML = (d.mitre_techniques || []).map(mitreChip).join("");
+    $("#a-kv").innerHTML = [["Rule", d.rule_name], ["Rule key", d.rule_key], ["Source IP", d.ip || "-"], ["Session", d.session_id || "-"], ["Detected", fmtTime(d.created_at)], ["Events", String(d.event_count)]]
+      .map(([k, v]) => `<span class="k">${k}</span><span class="v">${k === "Session" && d.session_id ? `<a href="/sessions/${encodeURIComponent(d.session_id)}" style="color:var(--accent)">${esc(v)}</a>` : esc(v)}</span>`).join("");
+    if (!formInit) { $("#case-status").value = STATUSES.includes(d.alert_status) ? d.alert_status : "new"; $("#case-notes").value = d.analyst_notes || ""; formInit = true; }
+    const ev = d.events || [];
+    $("#event-count").textContent = plural(ev.length, "event");
+    $("#empty-msg").hidden = ev.length > 0;
+    const tbody = $("#event-rows");
+    tbody.innerHTML = ev.map(e => { const s = e.severity_label || "info";
+      return `<tr><td class="rail-cell">${railMark(s)}</td><td class="mono faint">${fmtTime(e.timestamp)}</td><td>${sevTag(s)}</td><td class="dim">${esc(e.type)}</td><td>${mitreChip(e.mitre_technique)}</td><td class="details" title="${esc(e.details)}">${esc(e.details)}</td></tr>`; }).join("");
+    enter("events", $$("tr", tbody).slice(0, 20));
+  }
+
+  async function saveCase() {
+    const btn = $("#case-save"), msg = $("#save-msg");
+    btn.disabled = true; msg.className = "save-msg"; msg.textContent = "Saving";
+    try {
+      const d = await api("/api/alerts/" + encodeURIComponent(ALERT_ID) + "/status", { method: "POST", body: JSON.stringify({ status: $("#case-status").value, notes: $("#case-notes").value }) });
+      $("#a-status").innerHTML = statusTag(d.alert_status);
+      msg.className = "save-msg ok"; msg.textContent = "Saved " + fmtTime(new Date()).slice(7);
+      toast("Alert case saved", { kind: "ok" });
+    } catch (e) { msg.className = "save-msg err"; msg.textContent = "Save failed: " + e.message; }
+    finally { btn.disabled = false; }
+  }
+  $("#case-save").addEventListener("click", saveCase);
+  window.HT_CMDS = [{ g: "Action", l: "Save alert case", run: saveCase }];
+  $("#event-rows").innerHTML = skelRows(5, 6);
+  load();
+  setInterval(() => { if (!document.hidden) load(); }, 15000);
+})();
+</script>
+{% endblock %}

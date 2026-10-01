@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>{% block title %}Honeytrap SIEM{% endblock %} · Honeytrap SIEM</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 6v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6l-8-4Z' fill='%234cc38a'/%3E%3C/svg%3E">
+<script>
+  /* apply saved theme + rail state before first paint, so nothing flashes */
+  try {
+    if (localStorage.getItem("ht-theme") === "light") document.documentElement.dataset.theme = "light";
+    if (localStorage.getItem("ht-rail") === "collapsed") document.documentElement.dataset.rail = "collapsed";
+  } catch (e) {}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='slate.css') }}">
+{% block head %}{% endblock %}
+</head>
+<body>
+<header class="top">
+  <a class="app-title" href="/">
+    <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6l-8-4Z"/></svg></span>
+    Honeytrap SIEM
+  </a>
+  <div class="hud">
+    <a class="hud-item" id="hud-events" href="/" title="Events ingested"><span class="hud-dot live"></span><b id="hud-events-v">0</b><span class="hud-k">events</span></a>
+    <a class="hud-item" id="hud-alerts" href="/alerts" title="Open alerts"><span class="hud-dot"></span><b id="hud-alerts-v">0</b><span class="hud-k">open alerts</span></a>
+  </div>
+  <div class="spacer"></div>
+  <div class="live" id="live"><span class="live-dot"></span><span id="live-text">LIVE</span></div>
+  <div class="clock" id="clock"></div>
+  <button class="btn icon-btn" id="theme-toggle" title="Switch theme" aria-label="Switch theme">
+    <svg class="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8"/></svg>
+    <svg class="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.4M12 19.6V22M2 12h2.4M19.6 12H22M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7"/></svg>
+  </button>
+  <a class="btn" href="/logout">Sign out</a>
+</header>
+
+<aside class="rail">
+  <nav class="nav">
+    <button class="rail-toggle" id="rail-toggle" aria-label="Collapse sidebar" title="Collapse sidebar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+
+    <a href="/" class="{{ 'active' if active == 'overview' }}" aria-label="Overview">
+      <svg viewBox="-50 -50 100 100" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><rect class="pop" x="-36" y="-36" width="30" height="30" rx="7"/><rect class="pop" x="6" y="-36" width="30" height="30" rx="7"/><rect class="pop" x="-36" y="6" width="30" height="30" rx="7"/><rect class="pop" x="6" y="6" width="30" height="30" rx="7"/></svg>
+      <span class="label">Overview</span><span class="tip">Overview</span></a>
+    <a href="/alerts" class="{{ 'active' if active == 'alerts' }}" aria-label="Alerts">
+      <svg viewBox="-50 -50 100 100" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><g class="jiggle"><path d="M0 -36 L38 30 H-38 Z"/><path d="M0 -10 v16"/><circle cx="0" cy="18" r="1.5" fill="currentColor"/></g></svg>
+      <span class="label">Alerts</span><span class="tip">Alerts</span><span class="bdg" id="nav-alerts-bdg" hidden></span></a>
+    <a href="/sessions" class="{{ 'active' if active == 'sessions' }}" aria-label="Sessions">
+      <svg viewBox="-50 -50 100 100" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><rect x="-38" y="-32" width="76" height="64" rx="8"/><path class="pop" d="M-22 -10 L-8 2 L-22 14"/><path class="scan" d="M2 16 h18" stroke-width="6"/></svg>
+      <span class="label">Sessions</span><span class="tip">Sessions</span></a>
+
+    <span class="sep"></span>
+    <a href="/attack-matrix" class="{{ 'active' if active == 'matrix' }}" aria-label="ATT&amp;CK matrix">
+      <svg viewBox="-50 -50 100 100" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><rect x="-36" y="-36" width="72" height="72" rx="8"/><g class="pop"><path d="M-12 -36 v72"/></g><g class="pop"><path d="M12 -36 v72"/></g><g class="pop"><path d="M-36 0 h72"/></g></svg>
+      <span class="label">ATT&amp;CK matrix</span><span class="tip">ATT&amp;CK matrix</span></a>
+    <a href="/reports" class="{{ 'active' if active == 'reports' }}" aria-label="Reports">
+      <svg viewBox="-50 -50 100 100" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><g class="pop"><path d="M-24 -38 h30 l18 18 v58 h-48 z"/><path d="M6 -38 v18 h18"/></g><path class="scan" d="M-12 6 h24 M-12 20 h16" stroke-width="6"/></svg>
+      <span class="label">Reports</span><span class="tip">Reports</span></a>
+    <a href="/rules" class="{{ 'active' if active == 'rules' }}" aria-label="Detection rules">
+      <svg viewBox="-50 -50 100 100" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><path d="M-36 -22 h72 M-36 0 h72 M-36 22 h72" opacity=".55"/><circle class="pop" cx="-14" cy="-22" r="8" fill="var(--bg)"/><circle class="pop" cx="16" cy="0" r="8" fill="var(--bg)"/><circle class="pop" cx="-4" cy="22" r="8" fill="var(--bg)"/></svg>
+      <span class="label">Detection rules</span><span class="tip">Detection rules</span></a>
+
+    <span class="sep"></span>
+    <a href="/settings" class="{{ 'active' if active == 'settings' }}" aria-label="Settings">
+      <svg viewBox="-50 -50 100 100" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><g class="rotate"><circle r="11"/><path d="M0 -36 v10 M0 26 v10 M-36 0 h10 M26 0 h10 M-25.5 -25.5 l7 7 M18.5 18.5 l7 7 M-25.5 25.5 l7 -7 M18.5 -18.5 l7 -7"/></g></svg>
+      <span class="label">Settings</span><span class="tip">Settings</span></a>
+    <button class="cmdk-hint" id="cmdk-open" aria-label="Jump to (Ctrl K)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg><span class="label">Jump to</span><kbd class="label">Ctrl K</kbd><span class="tip">Jump to</span></button>
+  </nav>
+  <div class="rail-foot">
+    <div>Last event <span id="rail-last">-</span></div>
+    <div class="mono">{{ sensor.host }} · ssh:{{ sensor.ssh_port }} · http:{{ sensor.web_port }}</div>
+  </div>
+</aside>
+
+<main class="page">
+{% block content %}{% endblock %}
+</main>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<div class="modal-wrap" id="modal" hidden>
+  <div class="modal-backdrop" data-modal-cancel></div>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-h"><span class="modal-title" id="modal-title"></span>
+      <button class="modal-x" data-modal-cancel aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <p class="modal-msg" id="modal-msg"></p>
+    <div class="modal-f"><button class="btn" data-modal-cancel>Cancel</button><button class="btn primary" id="modal-ok">OK</button></div>
+  </div>
+</div>
+
+<div class="cmdk-wrap" id="cmdk" hidden>
+  <div class="cmdk-scrim" data-cmdk-close></div>
+  <div class="cmdk" role="dialog" aria-modal="true" aria-label="Jump to">
+    <div class="cmdk-in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
+      <input id="cmdk-input" placeholder="Search pages and actions" autocomplete="off" spellcheck="false" aria-controls="cmdk-list"><kbd>Esc</kbd></div>
+    <ul class="cmdk-list" id="cmdk-list" role="listbox"></ul>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='gsap.min.js') }}"></script>
+<script src="{{ url_for('static', filename='slate.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
