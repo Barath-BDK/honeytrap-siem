@@ -5,7 +5,7 @@ Attacker activity is pulled from the honeypot VM, scored, mapped to MITRE ATT&CK
 correlated into alerts by a detection engine, and investigated through a clean,
 dark "slate" console with case management and deterministic incident reports.
 
-Built as an academic cybersecurity project at IIITDM Kancheepuram.
+
 
 ![Overview](docs/screenshots/overview.png)
 
